@@ -1,10 +1,6 @@
 import pytest
 
-from app.core.config import settings
 from app.schemas.analysis import EvidenceLevel, MarketTemperature
-from app.schemas.profile import InvestmentProfile
-
-from app.services.analysis.narrative import compose_one_liner, compose_personal, josa, pick_topic
 
 
 def test_list_companies(client):
@@ -81,19 +77,8 @@ def test_unsupported_company(client):
     assert "actions" in body
 
 
-def test_guest_one_liner_uses_frontend_rule(client, monkeypatch):
-    # Agent 서사가 없거나 실패한 경우 Backend가 프론트 규칙으로 조립한다.
-    monkeypatch.setattr(settings, "narrative_source", "backend")
-    response = client.post("/api/v1/analyses", json={"query": "삼성전자"})
-
-    assert response.json()["one_line_summary"] == (
-        "뉴스는 HBM 메모리에 쏠려 있고, 공식 확인은 아직 조금이에요. "
-        "커뮤니티는 기대가 앞서요."
-    )
-
-
-def test_agent_narrative_wins_when_agent_succeeded(client, member_token):
-    # 기본(agent_first): MCP Client Agent가 완성한 서사를 그대로 화면에 보낸다.
+def test_passes_through_mcp_client_narrative(client, member_token):
+    # 서사는 MCP Client가 책임진다. Backend는 한 줄·개인화를 다시 조립하지 않는다.
     response = client.post(
         "/api/v1/analyses",
         json={"query": "삼성전자"},
@@ -103,89 +88,6 @@ def test_agent_narrative_wins_when_agent_succeeded(client, member_token):
 
     assert body["one_line_summary"].endswith("(Mock).")
     assert body["personalized_checkpoints"]["personal_summary"].startswith("장기 관점에서 보면")
-
-
-def test_backend_composes_when_agent_failed(client, member_token, monkeypatch):
-    from app.clients.mcp_client import client as mcp_client_module
-
-    original = mcp_client_module.fetch_common_analysis
-
-    async def failed_agent(*args, **kwargs):
-        raw = await original(*args, **kwargs)
-        raw["partial_failures"] = [{"service": "openai", "status": "model_error", "message": "x"}]
-        return raw
-
-    monkeypatch.setattr("app.services.analysis.service.mcp_client.fetch_common_analysis", failed_agent)
-    response = client.post(
-        "/api/v1/analyses",
-        json={"query": "삼성전자"},
-        headers={"Authorization": f"Bearer {member_token}"},
-    )
-    body = response.json()
-
-    assert body["one_line_summary"].startswith("뉴스는 HBM 메모리에 쏠려 있고")
-    assert body["personalized_checkpoints"]["personal_summary"].startswith("관심과 근거가 균형을 이루고 있어요.")
-
-
-def test_member_personal_summary_uses_risk_gap_rule(client, member_token, monkeypatch):
-    monkeypatch.setattr(settings, "narrative_source", "backend")
-    response = client.post(
-        "/api/v1/analyses",
-        json={"query": "삼성전자"},
-        headers={"Authorization": f"Bearer {member_token}"},
-    )
-
-    assert response.json()["personalized_checkpoints"]["personal_summary"] == (
-        "관심과 근거가 균형을 이루고 있어요. 삼성전자는 시장의 관심과 확인된 재료가 비슷해요. "
-        "손실을 피하는 걸 우선하는 오래 들고 가는 편이라면 HBM 메모리 실제 흐름만 꾸준히 따라가면 돼요."
-    )
-
-
-@pytest.mark.parametrize(
-    ("word", "expected"),
-    [("삼성", "삼성은"), ("삼성전자", "삼성전자는"), ("HBM", "HBM는")],
-)
-def test_josa_matches_frontend_rule(word, expected):
-    assert josa(word, "은", "는") == expected
-
-
-def test_pick_topic_uses_fixed_fallback_without_community_topics():
-    sources = [{"source_type": "news", "title": "제목에서 주제를 뽑으면 안 됨"}]
-
-    assert pick_topic(sources, "최근 이슈") == "최근 이슈"
-
-
-@pytest.mark.parametrize(
-    ("level", "expected"),
-    [
-        ("high", "관련 공시가 실제로 있어요"),
-        ("medium", "주요 공시는 있지만 지금 화제와는 달라요"),
-    ],
-)
-def test_one_liner_uses_issue_connection_evidence_copy(level, expected):
-    assert expected in compose_one_liner("공급계약", level, 60, 1)
-
-
-@pytest.mark.parametrize(
-    ("preferred_evidence", "expected"),
-    [
-        ("financial", "최근 사업보고서의 매출·영업이익 흐름"),
-        ("news", "최근 기사 내용이 공시로 확인되는지"),
-        ("market", "거래량이 평소보다 늘었는지"),
-        ("risk", "사업보고서의 위험 요인 중 지금 현실화된 게 있는지"),
-    ],
-)
-def test_personalized_first_check_follows_preferred_evidence(preferred_evidence, expected):
-    profile = InvestmentProfile(
-        experience_level="beginner",
-        risk_profile="conservative",
-        investment_horizon="long",
-        preferred_evidence=preferred_evidence,
-    )
-
-    result = compose_personal("삼성전자", "공급계약", 60, "high", profile)
-
-    assert result.priority_checks[0] == expected
 
 
 def test_evidence_level_accepts_and_preserves_issue_match_fields():
@@ -207,20 +109,25 @@ def test_evidence_level_accepts_and_preserves_issue_match_fields():
     assert evidence.model_dump()["matched"][0]["receipt_number"] == "202609040101"
 
 
-@pytest.mark.parametrize(
-    ("score", "level", "expected"),
-    [
-        (60, "low", "large"),
-        (59, "low", "small"),
-        (60, "medium", "some"),
-        (80, "high", "some"),
-        (44, "high", "quiet"),
-        (45, "high", "small"),
-        (52, "medium", "small"),
-    ],
-)
-def test_gap_state_uses_temperature_v2_scale(score, level, expected):
-    # 온도 v2(평소=50, 라벨 40/60/80) 기준 문턱값 60/60/80/45 — 프론트 deriveGapCheck·mock gapState와 동일
-    from app.services.analysis.narrative import gap_state
+def test_passes_through_mcp_client_fallback_when_llm_failed(client, member_token, monkeypatch):
+    # LLM이 실패해도 MCP Client가 대체 서사를 채워 보내므로 Backend는 그대로 전달한다.
+    from app.clients.mcp_client import client as mcp_client_module
 
-    assert gap_state(score, level) == expected
+    original = mcp_client_module.fetch_common_analysis
+
+    async def failed_agent(*args, **kwargs):
+        raw = await original(*args, **kwargs)
+        raw["partial_failures"] = [{"service": "openai", "status": "model_error", "message": "x"}]
+        return raw
+
+    monkeypatch.setattr("app.services.analysis.service.mcp_client.fetch_common_analysis", failed_agent)
+    response = client.post(
+        "/api/v1/analyses",
+        json={"query": "삼성전자"},
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    body = response.json()
+
+    assert body["status"] == "success"
+    assert body["one_line_summary"].endswith("(Mock).")
+    assert body["personalized_checkpoints"]["personal_summary"].startswith("장기 관점에서 보면")

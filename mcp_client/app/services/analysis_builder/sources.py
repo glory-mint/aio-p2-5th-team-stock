@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import Any
 
 from app.schemas.analysis import CollectedData, EvidenceLevel, SourceItem
 from app.services.analysis_builder.issues import extract_issues
@@ -9,8 +10,8 @@ def _meta(**values: object) -> dict[str, object]:
     return {key: value for key, value in values.items() if value not in (None, "", [], {})}
 
 
-def _community_topics(data: CollectedData) -> list[dict[str, object]]:
-    top_topics = data.community.get("top_topics") or {}
+def community_topics(community: dict[str, Any]) -> list[dict[str, Any]]:
+    top_topics = community.get("top_topics") or {}
     topics: list[dict[str, object]] = []
     for key, sentiment in (("expectations", "positive"), ("concerns", "negative")):
         for rank, text in enumerate(top_topics.get(key) or []):
@@ -149,7 +150,7 @@ def collect_sources(data: CollectedData, evidence: EvidenceLevel | None = None) 
                     negative=sentiment.get("negative_count"),
                     fgi=fgi_latest.get("fgi"),
                     fgi_label=fgi_latest.get("label"),
-                    topics=_community_topics(data),
+                    topics=community_topics(data.community),
                 ),
             )
         )

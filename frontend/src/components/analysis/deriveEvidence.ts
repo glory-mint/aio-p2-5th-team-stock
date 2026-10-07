@@ -280,7 +280,7 @@ export function deriveGapCheck(input: {
   if (changeRate >= 3) signals.push({ text: `가격이 하루 ${changeRate.toFixed(1)}% 올랐어요`, tone: "info" });
 
   let level: GapLevel = "small";
-  // 온도 v2(평소=50, 라벨 40/60/80) 기준 — backend narrative.gap_state·mock.ts gapState와 동일하게 유지
+  // 온도 v2(평소=50, 라벨 40/60/80) 기준 — mcp_client narrative.gap_state·mock.ts gapState와 동일하게 유지
   if (heat >= 60 && evidenceLevel === "low") level = "large";
   else if ((heat >= 60 && evidenceLevel === "medium") || (heat >= 80 && evidenceLevel !== "low")) level = "some";
   else if (heat < 45 && evidenceLevel === "high") level = "quiet";

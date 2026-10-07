@@ -1,4 +1,4 @@
-"""한줄결론·개인화 문장 스타일 가이드 — 프론트 시안(frontend/src/services/backend_api/mock.ts)과 Backend 폴백(backend/app/services/analysis/narrative.py)이 쓰는 문장 규칙.
+"""한줄결론·개인화 문장 스타일 가이드 — 프론트 시안(frontend/src/services/backend_api/mock.ts)과 규칙 기반 대체 서사(app/services/analysis_builder/narrative.py)이 쓰는 문장 규칙.
 Agent(LLM)가 같은 톤·구조로 쓰게 지시문에 붙인다. 문장은 예시이며, 실제 자료(뉴스 주제·공시 확인 정도·커뮤니티 분위기·성향)에 맞춰 채운다."""
 
 NARRATIVE_STYLE_GUIDE = """

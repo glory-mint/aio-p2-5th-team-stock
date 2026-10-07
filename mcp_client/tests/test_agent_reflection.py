@@ -407,7 +407,10 @@ def test_receipt_grounding_and_member_profile_are_independent(context):
     narrative.disclosure_summary = "공시 20990101000000를 확인했습니다."
     assert verify_narrative(narrative, context)[0].kind == "hallucination"
     narrative.disclosure_summary = "공식 자료를 확인했습니다."
-    context["investment_profile"] = {"preferred_evidence": "news", "investment_horizon": "long"}
+    context["investment_profile"] = {
+        "experience_level": "beginner", "risk_profile": "balanced",
+        "preferred_evidence": "news", "investment_horizon": "long",
+    }
     assert verify_narrative(narrative, context)[0].kind == "inconsistency"
     assert verify_narrative(build_fallback_narrative(context), context) == []
 

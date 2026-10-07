@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     mcp_client_mode: str = "mock"  # "mock" | "live"
     # 부하테스트로 live 모드(느린 외부 API)를 흉내낼 때만 쓴다. 평소엔 0.
     mcp_mock_delay_seconds: float = 0.0
-    narrative_source: str = "agent_first"  # "agent_first": Agent 서사 우선, 실패 시 Backend 조립 | "backend": 항상 Backend 조립
 
     llm_provider: str = "openai"
     openai_api_key: str = ""

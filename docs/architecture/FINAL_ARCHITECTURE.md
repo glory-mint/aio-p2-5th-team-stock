@@ -41,7 +41,7 @@
 - JWT 로그인·회원가입과 데모 계정 10개를 제공합니다.
 - 투자 성향과 Memory를 조회한다.
 - MCP Client에 선택적으로 성향 네 값을 보내고 비회원/회원 응답을 조립합니다.
-- `agent_first`에서는 OpenAI 실패가 없으면 Agent 서술·개인화를 채택하며, 실패하거나 `NARRATIVE_SOURCE=backend`이면 규칙 기반 문장을 조립합니다.
+- 한 줄 결론·개인화 서사는 MCP Client 응답을 그대로 씁니다. Agent(LLM)가 실패하면 MCP Client가 규칙 기반 대체 서사를 채워 보냅니다.
 
 ### MCP Client
 

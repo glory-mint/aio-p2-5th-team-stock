@@ -246,7 +246,7 @@ PUT은 기존 성향을 갱신하고 없으면 생성합니다. 투자 성향은
 
 비회원 응답은 가격과 한 줄 설명까지만 제공하며 `detail`, `personalized_checkpoints`가 `null`입니다. 회원 분석은 상세·개인화를 채우고 최근 검색을 Redis에 기록합니다. 회원·비회원 모두 분석 실행 이력을 PostgreSQL에 저장하며 비회원 `user_id`는 `null`입니다.
 
-MCP Client Agent의 서사가 정상 생성되면 우선 사용합니다. Agent 실패 또는 `NARRATIVE_SOURCE=backend` 설정에서는 Backend 규칙으로 한 줄과 개인화를 조립합니다.
+한 줄 설명과 개인화는 MCP Client 응답을 그대로 사용합니다. Agent(LLM)가 실패하면 MCP Client가 규칙 기반 대체 서사(`services/analysis_builder/narrative.py`)로 채워 보내므로 Backend는 다시 조립하지 않습니다.
 
 #### 미지원 기업과 오류
 
