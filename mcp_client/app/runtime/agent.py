@@ -36,6 +36,21 @@ class AgentResult:
     reflection_calls: int = 0
 
 
+def _stop(result: AgentResult, reason: str, message: str) -> AgentResult:
+    result.termination_reason = reason
+    result.failures.append(ToolFailure(
+        service="openai", status=reason, message=message, retryable=reason == "model_error",
+    ))
+    return result
+
+
+def _call_output(call: FunctionCall, detail: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "function_call_output", "call_id": call.call_id,
+        "output": json.dumps(detail, ensure_ascii=False),
+    }
+
+
 class StockAgentRuntime:
     def __init__(
         self,
@@ -109,6 +124,29 @@ class StockAgentRuntime:
             return None, Violation("tool_selection_error", "목록 밖·중복 접수번호 또는 상세 2건 상한 위반입니다.")
         return receipt, None
 
+    async def _fetch_detail(
+        self, call: FunctionCall, receipt: str, reporter: ProgressReporter, result: AgentResult,
+    ) -> tuple[dict[str, Any], bool]:
+        await reporter.publish(
+            "tool_started", "analyzing", "running",
+            "중요한 공시의 상세 근거를 확인하고 있어요.", 80,
+            tool_name=call.name, service="disclosure_mcp",
+        )
+        result.tool_calls += 1
+        try:
+            detail = await self.disclosure.get_disclosure_detail(receipt)
+        except MCPClientError as error:
+            result.failed_tools.append(call.name)
+            result.failures.append(ToolFailure(
+                service=error.service, status=error.code,
+                message=error.message, retryable=error.retryable,
+            ))
+            return {"status": error.code, "error": {
+                "message": error.message, "retryable": error.retryable,
+            }}, False
+        result.completed_tools.append(call.name)
+        return detail, True
+
     async def _run_reflecting(
         self, context: dict[str, Any], receipt_numbers: list[str], reporter: ProgressReporter,
     ) -> AgentResult:
@@ -127,13 +165,6 @@ class StockAgentRuntime:
         response_id = None
         outputs: list[dict[str, Any]] = []
 
-        def stop(reason: str, message: str) -> AgentResult:
-            result.termination_reason = reason
-            result.failures.append(ToolFailure(
-                service="openai", status=reason, message=message, retryable=reason == "model_error",
-            ))
-            return result
-
         await reporter.publish("llm_started", "analyzing", "running", "수집한 자료를 종합하고 있어요.", 70)
         # Preserve the existing bound: one initial call, then at most max_steps continuations.
         for step in range(self.max_steps + 1):
@@ -148,20 +179,20 @@ class StockAgentRuntime:
                 )
             except ProviderError as error:
                 if not error.response_id:
-                    return stop("model_error", "Luna 분석을 완료하지 못해 기본 설명을 제공합니다.")
+                    return _stop(result, "model_error", "Luna 분석을 완료하지 못해 기본 설명을 제공합니다.")
                 response_id = error.response_id
                 result.input_tokens += error.input_tokens
                 result.output_tokens += error.output_tokens
                 errors = [Violation("schema_mismatch", str(error))]
             except Exception:
-                return stop("model_error", "Luna 분석을 완료하지 못해 기본 설명을 제공합니다.")
+                return _stop(result, "model_error", "Luna 분석을 완료하지 못해 기본 설명을 제공합니다.")
             else:
                 response_id = turn.response_id
                 result.input_tokens += turn.input_tokens
                 result.output_tokens += turn.output_tokens
                 if not turn.calls:
                     if turn.narrative is None:
-                        return stop("model_error", "Luna가 분석 문장을 반환하지 않았습니다.")
+                        return _stop(result, "model_error", "Luna가 분석 문장을 반환하지 않았습니다.")
                     errors = verify_narrative(turn.narrative, verification_context)
                 else:
                     outputs = []
@@ -186,31 +217,12 @@ class StockAgentRuntime:
                             if step == self.max_steps:
                                 continue  # Inspect the rest of the batch before recording/terminating.
                             used.add(receipt)
-                            await reporter.publish(
-                                "tool_started", "analyzing", "running",
-                                "중요한 공시의 상세 근거를 확인하고 있어요.", 80,
-                                tool_name=call.name, service="disclosure_mcp",
-                            )
-                            try:
-                                detail = await self.disclosure.get_disclosure_detail(receipt)
-                            except MCPClientError as error:
-                                detail = {"status": error.code, "error": {
-                                    "message": error.message, "retryable": error.retryable,
-                                }}
-                                result.failed_tools.append(call.name)
-                                verification_context["failed_tools"].append(call.name)
-                                result.failures.append(ToolFailure(
-                                    service=error.service, status=error.code,
-                                    message=error.message, retryable=error.retryable,
-                                ))
-                            else:
-                                result.completed_tools.append(call.name)
+                            detail, ok = await self._fetch_detail(call, receipt, reporter, result)
+                            if ok:
                                 verification_context["data"]["disclosure_details"].append(detail)
-                            result.tool_calls += 1
-                        outputs.append({
-                            "type": "function_call_output", "call_id": call.call_id,
-                            "output": json.dumps(detail, ensure_ascii=False),
-                        })
+                            else:
+                                verification_context["failed_tools"].append(call.name)
+                        outputs.append(_call_output(call, detail))
 
             kinds = {error.kind for error in errors}
             for event in pending:
@@ -230,7 +242,7 @@ class StockAgentRuntime:
                     result.reflection_calls >= self.max_reflections or step == self.max_steps
                     or (schema_error and schema_retried) or (prose_error and narrative_retried)
                 ):
-                    return stop("reflection_exhausted", "성찰 상한 또는 재검증 실패로 기본 설명을 제공합니다.")
+                    return _stop(result, "reflection_exhausted", "성찰 상한 또는 재검증 실패로 기본 설명을 제공합니다.")
                 if schema_error or prose_error:
                     tools_closed = True
                     schema_retried |= schema_error
@@ -255,9 +267,9 @@ class StockAgentRuntime:
                 return result
             else:
                 if step == self.max_steps:
-                    return stop("max_steps_exceeded", "Agent 최대 반복 횟수를 초과했습니다.")
+                    return _stop(result, "max_steps_exceeded", "Agent 최대 반복 횟수를 초과했습니다.")
                 active_tools = tools if len(used) < 2 and not tools_closed else []
-        return stop("max_steps_exceeded", "Agent 최대 반복 횟수를 초과했습니다.")
+        return _stop(result, "max_steps_exceeded", "Agent 최대 반복 횟수를 초과했습니다.")
 
     async def _run_legacy(
         self,
@@ -281,14 +293,7 @@ class StockAgentRuntime:
         try:
             turn = await self.provider.first_turn(context, tools)
         except Exception:
-            result.failures.append(
-                ToolFailure(
-                    service="openai",
-                    status="model_error",
-                    message="Luna 분석을 완료하지 못해 규칙 기반 설명을 제공합니다.",
-                    retryable=True,
-                )
-            )
+            _stop(result, "model_error", "Luna 분석을 완료하지 못해 규칙 기반 설명을 제공합니다.")
             await reporter.publish(
                 "llm_failed",
                 "analyzing",
@@ -307,15 +312,7 @@ class StockAgentRuntime:
         for _step in range(1, self.max_steps + 1):
             if not turn.calls:
                 if turn.narrative is None:
-                    result.failures.append(
-                        ToolFailure(
-                            service="openai",
-                            status="model_error",
-                            message="Luna가 분석 문장을 반환하지 않았습니다.",
-                            retryable=True,
-                        )
-                    )
-                    return result
+                    return _stop(result, "model_error", "Luna가 분석 문장을 반환하지 않았습니다.")
                 result.narrative = turn.narrative
                 result.termination_reason = "completed"
                 await reporter.publish(
@@ -343,68 +340,17 @@ class StockAgentRuntime:
                     if receipt_number in used_receipts:
                         raise ValueError("같은 공시를 반복 조회할 수 없습니다.")
                 except (json.JSONDecodeError, TypeError, ValueError) as error:
-                    result.termination_reason = "invalid_tool_call"
-                    result.failures.append(
-                        ToolFailure(
-                            service="openai",
-                            status="invalid_tool_call",
-                            message=str(error),
-                            retryable=False,
-                        )
-                    )
-                    return result
+                    return _stop(result, "invalid_tool_call", str(error))
 
                 used_receipts.add(receipt_number)
-                await reporter.publish(
-                    "tool_started",
-                    "analyzing",
-                    "running",
-                    "중요한 공시의 상세 근거를 확인하고 있어요.",
-                    80,
-                    tool_name=call.name,
-                    service="disclosure_mcp",
-                )
-                try:
-                    detail = await self.disclosure.get_disclosure_detail(receipt_number)
-                except MCPClientError as error:
-                    detail = {
-                        "status": error.code,
-                        "error": {"message": error.message, "retryable": error.retryable},
-                    }
-                    result.failed_tools.append(call.name)
-                    result.failures.append(
-                        ToolFailure(
-                            service=error.service,
-                            status=error.code,
-                            message=error.message,
-                            retryable=error.retryable,
-                        )
-                    )
-                else:
-                    result.completed_tools.append(call.name)
-                result.tool_calls += 1
-                outputs.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call.call_id,
-                        "output": json.dumps(detail, ensure_ascii=False),
-                    }
-                )
+                detail, _ = await self._fetch_detail(call, receipt_number, reporter, result)
+                outputs.append(_call_output(call, detail))
 
             active_tools = [] if len(used_receipts) >= 2 else tools
             try:
                 turn = await self.provider.next_turn(turn.response_id, outputs, active_tools)
             except Exception:
-                result.termination_reason = "model_error"
-                result.failures.append(
-                    ToolFailure(
-                        service="openai",
-                        status="model_error",
-                        message="상세 공시 확인 후 Luna 분석을 완료하지 못했습니다.",
-                        retryable=True,
-                    )
-                )
-                return result
+                return _stop(result, "model_error", "상세 공시 확인 후 Luna 분석을 완료하지 못했습니다.")
             result.llm_calls += 1
             result.input_tokens += turn.input_tokens
             result.output_tokens += turn.output_tokens
@@ -413,13 +359,4 @@ class StockAgentRuntime:
             result.narrative = turn.narrative
             result.termination_reason = "completed"
             return result
-        result.termination_reason = "max_steps_exceeded"
-        result.failures.append(
-            ToolFailure(
-                service="openai",
-                status="max_steps_exceeded",
-                message="Agent 최대 반복 횟수를 초과해 기본 설명을 제공합니다.",
-                retryable=False,
-            )
-        )
-        return result
+        return _stop(result, "max_steps_exceeded", "Agent 최대 반복 횟수를 초과해 기본 설명을 제공합니다.")
