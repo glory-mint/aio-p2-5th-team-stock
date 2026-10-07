@@ -22,7 +22,6 @@ def _josa(word: str, consonant: str, vowel: str) -> str:
 
 
 def build_fallback_narrative(context: dict[str, Any]) -> Narrative:
-    company_name = context["company"]["company_name"]
     temperature = context["market_temperature"]
     evidence = context["evidence_level"]
     news = context["data"].get("news") or {}

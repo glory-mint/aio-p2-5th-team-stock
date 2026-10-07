@@ -65,7 +65,7 @@ class DartClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "DartClient":
+    def __enter__(self) -> DartClient:
         return self
 
     def __exit__(self, *_: object) -> None:

@@ -8,11 +8,10 @@ from app.core.config import Settings
 from app.providers.openai import FunctionCall, ModelTurn, ProviderError
 from app.runtime import StockAgentRuntime
 from app.runtime.verifier import verify_narrative
-from app.schemas.analysis import AnalysisRequest, Narrative, PersonalizedCheckpoints
+from app.schemas.analysis import AnalysisRequest, PersonalizedCheckpoints
 from app.services.analysis_builder.narrative import build_fallback_narrative
 from app.services.analysis_builder.scoring import calculate_evidence_level, calculate_market_temperature
 from app.services.progress_reporter import ProgressReporter
-from app.workflows.analysis import AnalysisWorkflow
 from app.workflows.factory import build_workflow
 from tests.helpers import FakeCollector, collected_data
 

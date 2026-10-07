@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.schemas.analysis import AnalysisRequest, AnalysisResponse, UnsupportedCompanyResponse
+from app.schemas.analysis import AnalysisRequest
 from app.schemas.company import Company, CompanyListResponse
 from app.schemas.errors import STATUS_HTTP_CODE, ErrorResponse
 from app.schemas.user import CurrentUser

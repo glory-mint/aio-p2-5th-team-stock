@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
-from typing import Sequence
+from collections.abc import Sequence
 
 import psycopg
 from psycopg.rows import dict_row

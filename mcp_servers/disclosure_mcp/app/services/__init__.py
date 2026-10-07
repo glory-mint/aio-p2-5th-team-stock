@@ -7,9 +7,9 @@ from .annual_report_service import AnnualReportNotFoundError, AnnualReportServic
 from .report_search_service import ReportSearchService
 
 __all__ = [
-    "CompanyResolver",
     "AnnualReportNotFoundError",
     "AnnualReportService",
+    "CompanyResolver",
     "DisclosureService",
     "DocumentParseError",
     "DocumentService",
